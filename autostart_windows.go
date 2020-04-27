@@ -1,21 +1,11 @@
 package autostart
 
-// #cgo LDFLAGS: -lole32 -luuid
-/*
-#define WIN32_LEAN_AND_MEAN
-#include <stdint.h>
-#include <windows.h>
-
-uint64_t CreateShortcut(char *shortcutA, char *path, char *args);
-*/
-import "C"
-
 import (
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/go-ole/go-ole"
+	"github.com/go-ole/go-ole/oleutil"
 )
 
 var startupDir string
@@ -28,25 +18,60 @@ func (a *App) path() string {
 	return filepath.Join(startupDir, a.Name+".lnk")
 }
 
+// IsEnabled checks if app is enabled on startup.
 func (a *App) IsEnabled() bool {
 	_, err := os.Stat(a.path())
 	return err == nil
 }
 
+// Enable this app on startup.
 func (a *App) Enable() error {
-	path := a.Exec[0]
-	args := strings.Join(a.Exec[1:], " ")
+	exePath := a.Exec[0]
+	args := a.Exec[1:]
 
 	if err := os.MkdirAll(startupDir, 0777); err != nil {
 		return err
 	}
-	res := C.CreateShortcut(C.CString(a.path()), C.CString(path), C.CString(args))
-	if res != 0 {
-		return errors.New(fmt.Sprintf("autostart: cannot create shortcut '%s' error code: 0x%.8x", a.path(), res))
+	if err := createShortcut(a.path(), exePath, args...); err != nil {
+		return err
 	}
+
 	return nil
 }
 
+// Disable this app on startup.
 func (a *App) Disable() error {
 	return os.Remove(a.path())
+}
+
+func createShortcut(autostartPath, exePath string, params ...string) error {
+	err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED|ole.COINIT_SPEED_OVER_MEMORY)
+	if err != nil {
+		return err
+	}
+	oleShellObject, err := oleutil.CreateObject("WScript.Shell")
+	if err != nil {
+		return err
+	}
+	defer oleShellObject.Release()
+	wshell, err := oleShellObject.QueryInterface(ole.IID_IDispatch)
+	if err != nil {
+		return err
+	}
+	defer wshell.Release()
+	cs, err := oleutil.CallMethod(wshell, "CreateShortcut", autostartPath)
+	if err != nil {
+		return err
+	}
+	idispatch := cs.ToIDispatch()
+	_, err = oleutil.PutProperty(idispatch, "TargetPath", exePath)
+	if err != nil {
+		return err
+	}
+	var args []interface{}
+	for _, param := range params {
+		args = append(args, param)
+	}
+	_, err = oleutil.CallMethod(idispatch, "Save", args...)
+	return err
 }
