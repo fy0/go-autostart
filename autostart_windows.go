@@ -3,6 +3,7 @@ package autostart
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
@@ -68,10 +69,16 @@ func createShortcut(autostartPath, exePath string, params ...string) error {
 	if err != nil {
 		return err
 	}
-	var args []interface{}
-	for _, param := range params {
-		args = append(args, param)
+	_, err = oleutil.PutProperty(idispatch, "Arguments", strings.Join(params, " "))
+	if err != nil {
+		return err
 	}
-	_, err = oleutil.CallMethod(idispatch, "Save", args...)
+
+	_, err = oleutil.PutProperty(idispatch, "WorkingDirectory", filepath.Dir(exePath))
+	if err != nil {
+		return err
+	}
+
+	_, err = oleutil.CallMethod(idispatch, "Save")
 	return err
 }
